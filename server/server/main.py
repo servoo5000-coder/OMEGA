@@ -1,21 +1,27 @@
+
+
 from uuid import uuid4
 from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
+from local_engine import (
+    build_plan,
+    generate_hypotheses,
+    review_analysis,
+)
 
 APP_NAME = "OMEGA"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 
 app = FastAPI(
     title=APP_NAME,
     version=APP_VERSION,
-    description="OMEGA analysis engine",
+    description="OMEGA Intelligence & Discovery Engine",
 )
 
-# السماح لواجهة Android WebView بالاتصال بالخادم
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -31,7 +37,11 @@ class AnalyzeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1, max_length=4000)
-    mode: Literal["general", "technical", "scientific"] = "general"
+    mode: Literal[
+        "general",
+        "technical",
+        "scientific",
+    ] = "general"
     max_steps: int = Field(default=5, ge=1, le=7)
 
 
@@ -50,58 +60,52 @@ async def analyze(request: AnalyzeRequest):
     subject = request.text.strip()
 
     if not subject:
+        raise HTTPException(
+            status_code=422,
+            detail="Input cannot be empty",
+        )
+
+    try:
+        # 1. Planning
+        plan = build_plan(
+            subject,
+            max_steps=request.max_steps,
+            mode=request.mode,
+        )
+
+        # 2. Hypothesis generation
+        hypotheses = generate_hypotheses(subject)
+
+        # 3. Critical review
+        critique = review_analysis(
+            subject,
+            hypotheses,
+        )
+
+        # 4. Final response
         return {
-            "status": "invalid_input",
-            "message": "Input is empty",
+            "engine": APP_NAME,
+            "version": APP_VERSION,
+            "request_id": uuid4().hex,
+            "status": "rules_fallback",
+            "mode": request.mode,
+            "objective": subject,
+            "plan": plan,
+            "hypotheses": hypotheses,
+            "critique": critique,
+            "storage": {
+                "persistent": False,
+                "session_only": True,
+            },
         }
 
-    steps = [
-        "تحديد الهدف والسؤال الأساسي",
-        "تقسيم المشكلة إلى عناصر أصغر",
-        "تحديد المعلومات المتاحة والناقصة",
-        "صياغة فرضيات قابلة للاختبار",
-        "اقتراح تجربة للتحقق",
-        "مراجعة النتائج والقيود",
-        "استخلاص ما يمكن استنتاجه",
-    ]
-
-    selected_steps = steps[:request.max_steps]
-
-    return {
-        "engine": APP_NAME,
-        "version": APP_VERSION,
-        "request_id": uuid4().hex,
-        "status": "rules_fallback",
-        "mode": request.mode,
-        "objective": subject,
-        "plan": {
-            "steps": selected_steps,
-        },
-        "hypotheses": [
-            {
-                "statement": (
-                    "توجد احتمالات متعددة تحتاج إلى "
-                    "معلومات إضافية للتحقق منها."
-                ),
-                "status": "untested",
-                "confidence": None,
-                "evidence_needed": [
-                    "بيانات موثوقة",
-                    "اختبار قابل للتكرار",
-                    "مقارنة النتائج",
-                ],
-            }
-        ],
-        "critique": {
-            "limitations": [
-                "التحليل الحالي يعتمد على قواعد محلية.",
-                "لم يتم إجراء تجربة واقعية.",
-                "لم يتم التحقق من الفرضيات بمصادر خارجية.",
-            ],
-            "conclusion": "نتائج أولية وليست حقائق مثبتة.",
-        },
-        "storage": {
-            "persistent": False,
-            "session_only": True,
-        },
-}
+    except ValueError as error:
+        raise HTTPException(
+            status_code=422,
+            detail=str(error),
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="OMEGA analysis engine error",
+        )
